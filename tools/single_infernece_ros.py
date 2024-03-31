@@ -272,7 +272,7 @@ if __name__ == "__main__":
     pub_arr_bbox = rospy.Publisher("pp_boxes", BoundingBoxArray, queue_size=5)
     
     print("[=] Warm up dry run prior to deployment.")
-    dummy_xyz = np.random.rand((131072, 5)).astype(np.float32)
+    dummy_xyz = np.random.rand(131072, 3)
     dummy_msg = xyz_array_to_pointcloud2(dummy_xyz)
     rslidar_callback(dummy_msg)
 
