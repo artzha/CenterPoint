@@ -20,10 +20,12 @@ def get_host_info():
 
 
 def get_dist_info():
-    if torch.__version__ < "1.0":
-        initialized = dist._initialized
-    else:
-        initialized = dist.is_initialized()
+    initialized = False
+    if dist.is_available():
+        if torch.__version__ < "1.0":
+            initialized = dist._initialized
+        else:
+            initialized = dist.is_initialized()
     if initialized:
         rank = dist.get_rank()
         world_size = dist.get_world_size()

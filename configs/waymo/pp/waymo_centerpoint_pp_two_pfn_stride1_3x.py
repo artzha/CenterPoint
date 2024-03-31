@@ -119,7 +119,7 @@ voxel_generator = dict(
     range=[-74.88, -74.88, -2, 74.88, 74.88, 4.0],
     voxel_size=[0.32, 0.32, 6.0],
     max_points_in_voxel=20,
-    max_voxel_num=[32000, 60000], # we only use non-empty voxels. this will be much smaller than max_voxel_num
+    max_voxel_num=32000,#[32000, 60000], # we only use non-empty voxels. this will be much smaller than max_voxel_num
 )
 
 train_pipeline = [

@@ -15,10 +15,14 @@ from sensor_msgs.msg import PointCloud2, PointField
 from jsk_recognition_msgs.msg import BoundingBox, BoundingBoxArray
 from pyquaternion import Quaternion
 
-from det3d import __version__, torchie
+from det3d import torchie
 from det3d.models import build_detector
 from det3d.torchie import Config
 from det3d.core.input.voxel_generator import VoxelGenerator
+
+from queue import Queue
+
+pc_msg_queue = Queue()
 
 def yaw2quaternion(yaw: float) -> Quaternion:
     return Quaternion(axis=[0,0,1], radians=yaw)
@@ -87,7 +91,9 @@ class Processor_ROS:
         cfg = Config.fromfile(self.config_path)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.net = build_detector(cfg.model, train_cfg=None, test_cfg=cfg.test_cfg)
-        self.net.load_state_dict(torch.load(self.model_path)["state_dict"])
+        # self.net.load_state_dict(torch.load(self.model_path)["state_dict"])
+        state_dict = torch.load(self.model_path)["state_dict"]
+        torchie.load_state_dict(self.net, state_dict)
         self.net = self.net.to(self.device).eval()
 
         self.range = cfg.voxel_generator.range
@@ -201,7 +207,7 @@ def rslidar_callback(msg):
             bbox = BoundingBox()
             bbox.header.frame_id = msg.header.frame_id
             bbox.header.stamp = rospy.Time.now()
-            q = yaw2quaternion(float(dt_box_lidar[i][8]))
+            q = yaw2quaternion(float(dt_box_lidar[i][6])) # Was 8 with velocities
             bbox.pose.orientation.x = q[1]
             bbox.pose.orientation.y = q[2]
             bbox.pose.orientation.z = q[3]
@@ -218,19 +224,34 @@ def rslidar_callback(msg):
     print("total callback time: ", time.time() - t_t)
     arr_bbox.header.frame_id = msg.header.frame_id
     arr_bbox.header.stamp = msg.header.stamp
-    if len(arr_bbox.boxes) is not 0:
+    if len(arr_bbox.boxes) != 0:
         pub_arr_bbox.publish(arr_bbox)
         arr_bbox.boxes = []
     else:
         arr_bbox.boxes = []
         pub_arr_bbox.publish(arr_bbox)
+
+def point_cloud_callback(msg):
+    # if ROS_DEBUG_FLAG:
+    #     pc_data = point_cloud2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)
+    #     pc_list = list(pc_data)
+    #     pc_np = np.array(pc_list, dtype=np.float32)
+
+    #     print("Received point cloud with shape ", pc_np.shape)
+
+    pc_msg_queue.put(msg)
+
    
 if __name__ == "__main__":
 
     global proc
     ## CenterPoint
-    config_path = 'configs/centerpoint/nusc_centerpoint_pp_02voxel_circle_nms_demo.py'
-    model_path = 'models/last.pth'
+    # config_path = 'configs/centerpoint/nusc_centerpoint_pp_02voxel_circle_nms_demo.py'
+    # model_path = 'models/last.pth'
+    # config_path = 'configs/waymo/voxelnet/waymo_centerpoint_voxelnet_3x.py'
+    # model_path = '/media/warthog/Art_SSD/waymo_centerpoint_checkpoint/waymo_centerpoint_voxelnet_3x/epoch_36.pth'
+    config_path = 'configs/waymo/pp/waymo_centerpoint_pp_two_pfn_stride1_3x.py'
+    model_path = '/media/warthog/Art_SSD/waymo_centerpoint_checkpoint/waymo_centerpoint_pp_two_pfn_stride1_3x/epoch_36.pth'
 
     proc_1 = Processor_ROS(config_path, model_path)
     
@@ -242,12 +263,25 @@ if __name__ == "__main__":
                         "/points_raw", 
                         "/lidar_protector/merged_cloud", 
                         "/merged_cloud",
-                        "/lidar_top", 
+                        # "/lidar_top",
+                        "/ecocar/ouster/lidar_packets",
                         "/roi_pclouds"]
+    print("Subscribing to", sub_lidar_topic[5])
+    sub_ = rospy.Subscriber(sub_lidar_topic[5], PointCloud2, point_cloud_callback, queue_size=5) #, buff_size=2**24)
     
-    sub_ = rospy.Subscriber(sub_lidar_topic[5], PointCloud2, rslidar_callback, queue_size=1, buff_size=2**24)
+    pub_arr_bbox = rospy.Publisher("pp_boxes", BoundingBoxArray, queue_size=5)
     
-    pub_arr_bbox = rospy.Publisher("pp_boxes", BoundingBoxArray, queue_size=1)
+    print("[=] Warm up dry run prior to deployment.")
+    dummy_xyz = np.random.rand((131072, 5)).astype(np.float32)
+    dummy_msg = xyz_array_to_pointcloud2(dummy_xyz)
+    rslidar_callback(dummy_msg)
 
     print("[+] CenterPoint ros_node has started!")    
-    rospy.spin()
+    while not rospy.is_shutdown():
+        if not pc_msg_queue.empty():
+            pc_msg = pc_msg_queue.get()
+            print("Processing point cloud message")
+            rslidar_callback(pc_msg)
+        
+        
+
