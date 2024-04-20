@@ -9,9 +9,10 @@ import sys
 import torch
 import time 
 
-from std_msgs.msg import Header
+from std_msgs.msg import Header, Float32MultiArray
 import sensor_msgs.point_cloud2 as pc2
 from sensor_msgs.msg import PointCloud2, PointField
+
 from jsk_recognition_msgs.msg import BoundingBox, BoundingBoxArray
 from pyquaternion import Quaternion
 
@@ -23,6 +24,9 @@ from det3d.core.input.voxel_generator import VoxelGenerator
 from queue import Queue
 
 pc_msg_queue = Queue()
+
+MAX_NUM_BOXES=20
+MAX_BOX_DIM=9
 
 def yaw2quaternion(yaw: float) -> Quaternion:
     return Quaternion(axis=[0,0,1], radians=yaw)
@@ -196,6 +200,8 @@ def xyz_array_to_pointcloud2(points_sum, stamp=None, frame_id=None):
 def rslidar_callback(msg):
     t_t = time.time()
     arr_bbox = BoundingBoxArray()
+    float32_arr_bbox = Float32MultiArray()
+    float32_arr_bbox.data = [0] * MAX_NUM_BOXES * MAX_BOX_DIM
 
     msg_cloud = ros_numpy.point_cloud2.pointcloud2_to_array(msg)
     np_p = get_xyz_points(msg_cloud, True)
@@ -221,15 +227,28 @@ def rslidar_callback(msg):
             bbox.value = scores[i]
             bbox.label = int(types[i])
             arr_bbox.boxes.append(bbox)
+
+            start = MAX_BOX_DIM*i
+            end = MAX_BOX_DIM*(i+1)
+            float32_arr_bbox.data[start:end] = [
+                bbox.pose.position.x, bbox.pose.position.y, bbox.pose.position.z,
+                bbox.dimensions.x, bbox.dimensions.y, bbox.dimensions.z,
+                bbox.pose.orientation.z, bbox.value, bbox.label
+            ]
     print("total callback time: ", time.time() - t_t)
     arr_bbox.header.frame_id = msg.header.frame_id
     arr_bbox.header.stamp = msg.header.stamp
     if len(arr_bbox.boxes) != 0:
         pub_arr_bbox.publish(arr_bbox)
         arr_bbox.boxes = []
+        pub_float32_bbox.publish(float32_arr_bbox)
+        float32_arr_bbox.data = [0] * MAX_NUM_BOXES * MAX_BOX_DIM
     else:
         arr_bbox.boxes = []
         pub_arr_bbox.publish(arr_bbox)
+        float32_arr_bbox.data = [0] * MAX_NUM_BOXES * MAX_BOX_DIM
+        pub_float32_bbox.publish(float32_arr_bbox)
+
 
 def point_cloud_callback(msg):
     # if ROS_DEBUG_FLAG:
@@ -251,7 +270,7 @@ if __name__ == "__main__":
     # config_path = 'configs/waymo/voxelnet/waymo_centerpoint_voxelnet_3x.py'
     # model_path = '/media/warthog/Art_SSD/waymo_centerpoint_checkpoint/waymo_centerpoint_voxelnet_3x/epoch_36.pth'
     config_path = 'configs/waymo/pp/waymo_centerpoint_pp_two_pfn_stride1_3x.py'
-    model_path = '/media/warthog/Art_SSD/waymo_centerpoint_checkpoint/waymo_centerpoint_pp_two_pfn_stride1_3x/epoch_36.pth'
+    model_path = './epoch_36.pth'
 
     proc_1 = Processor_ROS(config_path, model_path)
     
@@ -270,6 +289,7 @@ if __name__ == "__main__":
     sub_ = rospy.Subscriber(sub_lidar_topic[5], PointCloud2, point_cloud_callback, queue_size=5) #, buff_size=2**24)
     
     pub_arr_bbox = rospy.Publisher("pp_boxes", BoundingBoxArray, queue_size=5)
+    pub_float32_bbox = rospy.Publisher("pp_boxes_float32", Float32MultiArray, queue_size=5)
     
     print("[=] Warm up dry run prior to deployment.")
     dummy_xyz = np.random.rand(131072, 3)
